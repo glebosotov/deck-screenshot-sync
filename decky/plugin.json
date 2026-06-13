@@ -1,0 +1,11 @@
+{
+  "name": "Game Media Sync",
+  "author": "Gleb Osotov",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["media", "immich", "steam"],
+    "description": "Sync Steam Deck screenshots and game clips to Immich.",
+    "image": "https://raw.githubusercontent.com/glebosotov/game-media-sync/master/img/sync-media-to-immich.webp"
+  }
+}

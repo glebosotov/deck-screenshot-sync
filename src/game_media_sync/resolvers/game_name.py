@@ -17,6 +17,14 @@ from typing import Optional
 import requests
 
 
+_CACHE_FILENAME = "steam_app_cache.json"
+_DEFAULT_CACHE_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+    _CACHE_FILENAME,
+)
+_cache_dicts: dict[str, dict[str, str]] = {}
+
+
 def _try_steamdb(app_id: int, timeout: float = 5.0) -> Optional[str]:
     """Query SteamDB app page and parse the game name from multiple HTML sources."""
     url = f"https://steamdb.info/app/{app_id}/"
@@ -118,23 +126,35 @@ def _try_steamdb(app_id: int, timeout: float = 5.0) -> Optional[str]:
     return None
 
 
+def _cache_path(cache_dir: str | os.PathLike[str] | None = None) -> str:
+    if cache_dir:
+        return os.path.join(os.fspath(cache_dir), _CACHE_FILENAME)
+    return _DEFAULT_CACHE_PATH
+
+
 @lru_cache(maxsize=1024)
-def get_game_name(app_id: int) -> Optional[str]:
+def _lookup_remote_game_name(app_id: int) -> Optional[str]:
+    name = _try_store_api(app_id)
+    if name:
+        return name
+    return _try_steamdb(app_id)
+
+
+def get_game_name(
+    app_id: int, cache_dir: str | os.PathLike[str] | None = None
+) -> Optional[str]:
     """Resolve human-readable game name by app ID.
 
     Returns the name string if found, else None.
     """
-    cached = _get_cached_name(app_id)
+    cache_path = _cache_path(cache_dir)
+    cached = _get_cached_name(app_id, cache_path)
     if cached:
         return cached
 
-    name = _try_store_api(app_id)
+    name = _lookup_remote_game_name(app_id)
     if name:
-        _set_cached_name(app_id, name)
-        return name
-    name = _try_steamdb(app_id)
-    if name:
-        _set_cached_name(app_id, name)
+        _set_cached_name(app_id, name, cache_path)
         return name
     return None
 
@@ -168,62 +188,49 @@ def _try_store_api(
     return None
 
 
-# -----------------------------
-# Simple persistent JSON cache
-# -----------------------------
-
-_CACHE_FILENAME = "steam_app_cache.json"
-# Store cache in project root, not in package directory
-_CACHE_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
-    _CACHE_FILENAME,
-)
-_cache_dict = None  # type: ignore[var-annotated]
-
-
-def _load_cache() -> dict:
-    global _cache_dict
-    if _cache_dict is not None:
-        return _cache_dict
+def _load_cache(cache_path: str) -> dict[str, str]:
+    if cache_path in _cache_dicts:
+        return _cache_dicts[cache_path]
     try:
-        if os.path.exists(_CACHE_PATH):
-            with open(_CACHE_PATH, "r", encoding="utf-8") as f:
+        if os.path.exists(cache_path):
+            with open(cache_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
-                    _cache_dict = {
+                    _cache_dicts[cache_path] = {
                         str(k): v for k, v in data.items() if isinstance(v, str)
                     }
-                    return _cache_dict
+                    return _cache_dicts[cache_path]
     except Exception:
         pass
-    _cache_dict = {}
-    return _cache_dict
+    _cache_dicts[cache_path] = {}
+    return _cache_dicts[cache_path]
 
 
-def _save_cache() -> None:
+def _save_cache(cache_path: str) -> None:
     try:
-        tmp_path = _CACHE_PATH + ".tmp"
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        tmp_path = cache_path + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(_load_cache(), f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, _CACHE_PATH)
+            json.dump(_load_cache(cache_path), f, ensure_ascii=False, indent=2)
+        os.replace(tmp_path, cache_path)
     except Exception:
         pass
 
 
-def _get_cached_name(app_id: int) -> Optional[str]:
-    cache = _load_cache()
+def _get_cached_name(app_id: int, cache_path: str) -> Optional[str]:
+    cache = _load_cache(cache_path)
     value = cache.get(str(app_id))
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
 
 
-def _set_cached_name(app_id: int, name: str) -> None:
-    cache = _load_cache()
+def _set_cached_name(app_id: int, name: str, cache_path: str) -> None:
+    cache = _load_cache(cache_path)
     if cache.get(str(app_id)) == name:
         return
     cache[str(app_id)] = name
-    _save_cache()
+    _save_cache(cache_path)
 
 
 if __name__ == "__main__":

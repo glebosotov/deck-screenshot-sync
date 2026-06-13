@@ -1,7 +1,11 @@
 .env
+.direnv/
 .Python
 .ruff_cache/
 .venv
+decky/node_modules/
+decky/dist/
+decky/out/
 *.egg-info/
 *.pyc
 *.pyd

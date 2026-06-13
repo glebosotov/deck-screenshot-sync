@@ -6,44 +6,40 @@ import shutil
 import subprocess
 import tempfile
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional
-
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-)
 
 from ...core import (
     STEAM_DECK,
     MediaMetadata,
-    UploadTracker,
     get_immich_config,
     set_file_timestamps,
     set_video_metadata,
     upload_to_immich,
 )
-from ...resolvers.game_name import get_game_name
 from .utils import GetAccountId, steamdir
 
 TRACKING_FILE = "clips_tracker.json"
 
 
-def get_clips_directory() -> Optional[str]:
+def get_clips_directory(
+    steam_dir: str | os.PathLike[str] | None = None,
+) -> Optional[str]:
     try:
-        user = GetAccountId()
-        clips_dir = f"{steamdir}userdata/{user}/gamerecordings/clips"
-        if os.path.exists(clips_dir):
-            return clips_dir
+        user = GetAccountId(steam_dir)
+        if user is None:
+            return None
+        base = Path(steam_dir or steamdir).expanduser()
+        clips_dir = base / "userdata" / str(user) / "gamerecordings" / "clips"
+        if clips_dir.exists():
+            return str(clips_dir)
     except Exception:
         pass
     return None
 
 
-def discover_clips() -> List[Dict]:
-    clips_dir = get_clips_directory()
+def discover_clips(steam_dir: str | os.PathLike[str] | None = None) -> List[Dict]:
+    clips_dir = get_clips_directory(steam_dir)
     if not clips_dir:
         return []
 
@@ -98,6 +94,9 @@ def discover_clips() -> List[Dict]:
 
 def convert_clip_to_mp4(session_mpd_path: str, output_path: str) -> bool:
     try:
+        if not shutil.which("ffmpeg"):
+            return False
+
         mpd_dir = os.path.dirname(session_mpd_path)
         all_files = os.listdir(mpd_dir)
 
@@ -238,65 +237,8 @@ def main(
     output_dir: str | None = None,
     upload: bool = True,
 ):
-    if not upload and not output_dir:
-        print("Nothing to do: --no-upload without --output")
-        return
+    from .service import print_cli_summary, sync_steam_clips
 
     cfg = get_immich_config() if upload else None
-    tracker = UploadTracker(TRACKING_FILE)
-    all_clips = discover_clips()
-    if not all_clips:
-        return
-
-    new = [c for c in all_clips if tracker.is_new(c["creation_time"])]
-    if not new:
-        return
-
-    ok = dup = fail = 0
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TextColumn("{task.fields[filename]}"),
-    ) as progress:
-        task = progress.add_task("Clips", total=len(new), filename="")
-        for clip in new:
-            name = clip["clip_name"]
-            progress.update(task, filename=name)
-            game_name = get_game_name(clip["game_id"])
-            try:
-                result = process_clip(
-                    clip, game_name, cfg, output_dir=output_dir, upload=upload
-                )
-                if result and result.get("status") == "duplicate":
-                    progress.console.print(
-                        f"  [yellow]✓[/yellow] {name} [dim](duplicate)[/dim]"
-                    )
-                    dup += 1
-                else:
-                    progress.console.print(f"  [green]✓[/green] {name}")
-                    ok += 1
-                tracker.record(
-                    {
-                        "clip_name": clip["clip_name"],
-                        "game_id": clip["game_id"],
-                        "upload_time": datetime.now().isoformat(),
-                        "creation_time": clip["creation_time"],
-                    }
-                )
-            except Exception as e:
-                progress.console.print(f"  [red]✗[/red] {name}: {e}")
-                fail += 1
-            progress.advance(task)
-
-    if ok or dup:
-        tracker.update_time(max(c["creation_time"] for c in new))
-        tracker.save()
-
-    parts = [f"{ok} ok"]
-    if dup:
-        parts.append(f"{dup} duplicates")
-    if fail:
-        parts.append(f"{fail} failed")
-    print(f"Clips: {', '.join(parts)} / {len(new)}")
+    summary = sync_steam_clips(output_dir=output_dir, upload=upload, cfg=cfg)
+    print_cli_summary(summary)

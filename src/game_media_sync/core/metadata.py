@@ -30,11 +30,15 @@ SWITCH2 = DeviceInfo(make="Nintendo", model="Nintendo Switch 2")
 
 
 def get_exiftool_path() -> str:
-    exiftool_dir = os.getenv("EXIFTOOL_PATH")
-    if not exiftool_dir:
+    exiftool_path = os.getenv("EXIFTOOL_PATH")
+    if not exiftool_path:
         return "exiftool"
+
+    if os.path.isfile(exiftool_path) and os.access(exiftool_path, os.X_OK):
+        return exiftool_path
+
     for name in ("exiftool", "exiftool.exe"):
-        full = os.path.join(exiftool_dir, name)
+        full = os.path.join(exiftool_path, name)
         if os.path.exists(full) and os.access(full, os.X_OK):
             return full
     return "exiftool"
